@@ -11,9 +11,14 @@ import android.os.HandlerThread
 import android.support.v4.app.ActivityCompat
 import android.support.v4.content.ContextCompat
 import android.util.Base64
+import android.util.Log
+import com.google.android.things.pio.Gpio
+import com.google.android.things.pio.GpioCallback
+import com.google.android.things.pio.PeripheralManagerService
 import com.google.firebase.FirebaseApp
 import com.google.firebase.database.FirebaseDatabase
 import kotlinx.android.synthetic.main.activity_main.*
+import java.io.IOException
 
 
 /**
@@ -25,9 +30,9 @@ import kotlinx.android.synthetic.main.activity_main.*
  *
  * <pre>{@code
  * val service = PeripheralManagerService()
- * val mLedGpio = service.openGpio("BCM6")
- * mLedGpio.setDirection(Gpio.DIRECTION_OUT_INITIALLY_LOW)
- * mLedGpio.value = true
+ * val buttonGpio = service.openGpio("BCM6")
+ * buttonGpio.setDirection(Gpio.DIRECTION_OUT_INITIALLY_LOW)
+ * buttonGpio.value = true
  * }</pre>
  * <p>
  * For more complex peripherals, look for an existing user-space driver, or implement one if none
@@ -61,6 +66,8 @@ class MainActivity : Activity() {
         cloudThread = HandlerThread(cloudThreadString)
         cloudThread.start()
         cloudHandler = Handler(cloudThread.looper)
+
+        ledLight()
 
         checkPermissionAndOpenCam()
     }
@@ -104,6 +111,7 @@ class MainActivity : Activity() {
         val log = database.getReference("logs").push()
         val imageStr = Base64.encodeToString(imageBytes, Base64.NO_WRAP or Base64.URL_SAFE)
 
+        ledGpio!!.value = true
         setImageToPreview(imageStr)
 
         log.child("image").setValue(imageStr)
@@ -123,6 +131,7 @@ class MainActivity : Activity() {
                             override fun run() {
                                 //Do something after 5000ms
                                 preview_image_view.setImageResource(R.drawable.ic_avatar)
+                                ledGpio!!.value = false
                             }
                         }, 5000)
                     }
@@ -132,4 +141,46 @@ class MainActivity : Activity() {
             }
         }.start()
     }
+
+
+    // Peripheral region
+
+    private val TAG = MainActivity::class.java!!.getSimpleName()
+
+    private var buttonGpio: Gpio? = null
+    private var ledGpio: Gpio? = null
+
+    private fun ledLight() {
+
+
+        // Step 1. Create GPIO connection.
+        val service = PeripheralManagerService()
+        try {
+            ledGpio = service.openGpio(BoardDefaults.getGPIOForLED())
+            buttonGpio = service.openGpio(BoardDefaults.getGPIOForButton())
+            // Step 2. Configure as an output.
+            buttonGpio!!.setDirection(Gpio.DIRECTION_IN)
+            buttonGpio!!.setEdgeTriggerType(Gpio.EDGE_FALLING);
+
+            ledGpio!!.setDirection(Gpio.DIRECTION_OUT_INITIALLY_LOW)
+
+            buttonGpio!!.registerGpioCallback(object : GpioCallback() {
+
+                override fun onGpioEdge(gpio: Gpio?): Boolean {
+                    Log.i(TAG, "GPIO changed, button pressed")
+                    // Return true to continue listening to events
+                    DoorbellCamera.takePicture()
+                    return true
+                }
+            })
+
+            // Step 4. Repeat using a handler.
+
+        } catch (e: IOException) {
+            Log.e(TAG, "Error on PeripheralIO API", e)
+        }
+
+
+    }
+
 }
